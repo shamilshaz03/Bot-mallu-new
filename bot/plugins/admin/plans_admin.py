@@ -18,7 +18,14 @@ async def plans_menu_handler(client: Client, cb: CallbackQuery):
 @admin_only
 async def plan_edit_menu_handler(client: Client, cb: CallbackQuery):
     plan_id = cb.matches[0].group(1)
+
+    # BUG-6 FIX: Guard against plan being absent from the DB (fresh deploy
+    # before seed runs, or manually deleted document).
     plan = await get_plan(plan_id)
+    if not plan:
+        await cb.answer("Plan not found in database.", show_alert=True)
+        return
+
     await cb.answer()
     text = (
         f"💳 **₹{plan_id} Plan**\n\n"
@@ -36,7 +43,7 @@ async def plan_field_prompt(client: Client, cb: CallbackQuery):
     plan_id, field = cb.matches[0].group(1), cb.matches[0].group(2)
     state_store.set(cb.from_user.id, "admin_awaiting:planfield", {"plan": plan_id, "field": field})
     await cb.answer()
-    await client.send_message(cb.message.chat.id, f"✏️ Send the new **{field}** for ₹{plan_id} plan now.")
+    await client.send_message(cb.message.chat.id, f"✏️ Send the new **{field}** for ₹{plan_id} plan now.\n\nSend /cancel to abort.")
 
 
 def _awaiting_planfield(_, __, message: Message) -> bool:

@@ -4,26 +4,19 @@ A production-ready Telegram bot for selling subscription-based premium
 content via one-time activation keys. Built with **Pyrogram**, **MongoDB
 (Motor)**, and a modular plugin architecture. Deploys cleanly to **Koyeb**.
 
-This is **not** a movie/auto-filter bot — it's a premium content
-subscription platform with three fixed plans (₹199 / ₹299 / ₹799),
-sample previews, manual payment + activation keys, and an all-button
-admin panel.
-
 ## Features
 
-- 💎 Three fixed plans, each with editable title/description/price
+- 💎 Three fixed plans (₹199 / ₹299 / ₹799) with editable title/description/price
 - 🎁 Admin-curated sample previews per plan (never exposes premium content)
 - 🔓 Get More → QR code, payment details, contact admin, enter key
 - 🔑 Cryptographically random, single-use activation keys with **atomic**
-  MongoDB redemption (race-condition proof — a key can only ever be used once)
-- 👑 Automatic subscription-status detection on every `/start`
-  (✅ Subscribed / ⬆ Upgrade / 👑 Current Plan), upgrade path preserves
-  all previously purchased access
+  MongoDB redemption (race-condition proof)
+- 👑 Automatic subscription-status detection (`✅ Owned / 👑 Current Plan`)
 - 📂 Paginated content feed (10 items/page, stable ordering, no duplicates)
 - 🎥📷📁 Category browsing — exclusive to the ₹799 All Access plan
-- 🛠 Fully button-based admin panel: welcome settings, plan editing,
-  sample management, content upload/edit/delete, key generation &
-  management, broadcast, statistics, payment/QR/contact settings
+- 📢 Optional force-join channel enforcement
+- 📋 Optional admin log channel for key redemptions, broadcasts, and new users
+- 🛠 Fully button-based admin panel with `/cancel` to abort any multi-step flow
 - ⚡ Async throughout, optimized MongoDB indexes, structured logging
 
 ## Project Structure
@@ -51,14 +44,15 @@ premium-content-bot/
     ├── utils/
     │   ├── key_generator.py   # secrets-based key generation
     │   ├── decorators.py      # admin_only + in-memory FSM state store
+    │   ├── log_channel.py     # optional LOG_CHANNEL event forwarding
     │   ├── pagination.py
     │   └── logger.py
     └── plugins/
         ├── start.py, plans.py, activation.py, content_feed.py
         └── admin/
-            ├── panel.py, welcome.py, plans_admin.py, samples_admin.py,
-            ├── content_admin.py, keys_admin.py, broadcast.py,
-            └── statistics_admin.py, payment_settings.py, common.py
+            ├── panel.py (includes /cancel), welcome.py, plans_admin.py,
+            ├── samples_admin.py, content_admin.py, keys_admin.py,
+            └── broadcast.py, statistics_admin.py, payment_settings.py, common.py
 ```
 
 ## Local Setup
@@ -85,119 +79,91 @@ premium-content-bot/
    ```
 
 5. Open your bot in Telegram, send `/start`, and send `/admin` (as one of
-   the configured `ADMIN_IDS`) to open the admin panel and start
-   configuring plans, samples, content, and payment details.
+   the configured `ADMIN_IDS`) to open the admin panel.
 
-## Startup Audit Log (fixed issues)
-
-If you previously hit **"bot deploys, health check passes, but `/start`
-never responds"** or **`ModuleNotFoundError: No module named 'pyrogram'`**,
-those were caused by:
-
-1. **`requirements.txt` only pinned `motor`, not `pymongo`.** pip's
-   resolver had to guess a `pymongo` version, hit a conflict with
-   `motor==3.5.1`'s constraints, and aborted the *entire* install —
-   including `pyrogram` — before anything got installed. Fixed by
-   pinning a verified-compatible pair: `motor==3.6.0` + `pymongo==4.9.2`.
-2. **No MongoDB connectivity check before use.** A bad/unreachable
-   `MONGO_URI` would hang or fail deep inside index creation with no
-   clear log line. `main.py` now does an explicit `db.command("ping")`
-   with a 10s timeout and a clear error message before anything else runs.
-3. **No confirmation the bot actually connected to Telegram.** `app.start()`
-   was never wrapped in error handling, and there was no `get_me()` call to
-   prove the bot token/connection actually worked. Both are now explicit
-   and logged.
-4. **Plugin import failures could go unnoticed.** Pyrogram's built-in
-   plugin loader only warns and moves on. `main.py` now pre-imports every
-   file under `bot/plugins` itself via `bot/utils/plugin_loader.py` and
-   logs a clear success/failure line (with full traceback on failure) for
-   each one before the bot starts.
-5. **`asyncio.Event().wait()` replaced with Pyrogram's `idle()`**, which is
-   the library's documented long-running entrypoint and handles
-   SIGINT/SIGTERM (Koyeb's stop/restart signal) cleanly instead of an
-   abrupt kill.
-6. **Startup order fixed** so the health-check web server binds to `$PORT`
-   *first* and independently of Mongo/bot startup, then Mongo checks run,
-   then plugins are verified, then the bot connects — with a clear log
-   line at each stage.
-
-Expected log sequence on a healthy boot:
+## Expected Startup Log (healthy boot)
 
 ```
 ---- Environment variable check ----
 API_ID: OK (...)
-...
+API_HASH: OK (xxxx****)
+BOT_TOKEN: OK (1234****)
+MONGO_URI: OK (mongodb+srv:***)
+ADMIN_IDS: OK (1 admin(s) configured)
+-------------------------------------
 Health server started (listening on port 8000).
 MongoDB connected successfully.
 Ensuring MongoDB indexes...
 Seeding default plans/settings (idempotent)...
----- Loading plugins from 'bot/plugins' ----
-Loaded plugin: bot.plugins.start
+Database startup checks complete.
+---- Loading plugins from '/app/bot/plugins' ----
+Loaded plugin: bot.plugins.activation
+Loaded plugin: bot.plugins.content_feed
 ...
----- Plugin loading complete: 21 succeeded, 0 failed (of 21 files) ----
+---- Plugin loading complete: 14 succeeded, 0 failed (of 14 files) ----
 Bot connected successfully: @your_bot_username (id=123456789)
-Plugins loaded: 21/21 modules registered handlers.
+Plugins loaded: 14/14 modules registered handlers.
 Bot is now receiving live updates from Telegram (e.g. /start will respond).
 ```
 
-## Python Version
-
-This project targets **Python 3.10** (see `.python-version`, used by
-Koyeb's buildpack) and the `Dockerfile` base image is pinned to
-`python:3.10-slim` to match — keeping the buildpack and Docker deploy
-paths consistent and avoiding compiled-wheel mismatches (e.g. `tgcrypto`).
-
 ## Deploying to Koyeb
-
 
 ### Option A — Dockerfile (recommended)
 
 1. Push this repo to GitHub.
-2. In Koyeb: **Create App → GitHub → select this repo**.
-3. Koyeb will detect the `Dockerfile` automatically.
+2. In Koyeb: **Create App → GitHub → select repo**.
+3. Koyeb detects the `Dockerfile` automatically.
 4. Set **Environment Variables** (from `.env.example`):
    `API_ID`, `API_HASH`, `BOT_TOKEN`, `MONGO_URI`, `DB_NAME`, `ADMIN_IDS`,
-   `LOG_CHANNEL` (optional), `PORT=8000`.
-5. Set the exposed port to `8000` and health-check path to `/health`.
-6. Deploy. Koyeb will keep the process alive; the bundled aiohttp server
-   satisfies Koyeb's health checks while Pyrogram handles bot updates in
-   the same process.
+   `LOG_CHANNEL` (optional), `FORCE_JOIN_CHANNEL` (optional), `PORT=8000`.
+5. Set exposed port to `8000` and health-check path to `/health`.
+6. Deploy.
 
 ### Option B — Buildpack (no Dockerfile)
 
 1. Same GitHub setup, but choose **Buildpack** instead of Dockerfile.
-2. Koyeb will pick up `requirements.txt` and the `Procfile` automatically
-   (`worker: python main.py`).
+2. Koyeb picks up `requirements.txt` and the `Procfile` (`web: python main.py`).
 3. Set the same environment variables as above.
 
-## Admin Workflow (all in-app, no code edits needed)
+> **Note:** The Procfile declares `web:` (not `worker:`). Koyeb web services
+> require this to correctly route the HTTP health check to your process and
+> apply the right restart policy.
 
-- `/admin` → **Welcome Settings** to set the welcome photo/message
-- **Manage Plans** to set title/description/price for each of the 3 plans
-- **Manage Samples** to upload preview media per plan
-- **Upload Content** to add premium videos/photos/files (choose
-  plan, and category if ₹799)
-- **Activation Keys** → Generate Keys (pick plan + count: 1/5/10/50),
-  view unused/used keys, or bulk-delete unused keys
-- **Payment Settings** to set the QR code, payment details text, and
-  contact-admin text
-- **Broadcast** to message all users at once
-- **Statistics** for a live snapshot of users, subscribers, and keys
+## Bug Fixes Applied (vs. previous version)
+
+| # | What was fixed |
+|---|----------------|
+| 1 | `Procfile`: `worker:` → `web:` — Koyeb web services require the `web:` process type |
+| 2 | `main.py`: added `in_memory=True` to `Client` — prevents session-loss restart loops on ephemeral Koyeb filesystem |
+| 3 | `plugin_loader.py` / `main.py`: plugin path is now absolute (derived from `__file__`) — no longer CWD-sensitive |
+| 4 | `main.py`: `ensure_indexes()` and `seed_defaults()` wrapped in `asyncio.wait_for` timeouts (30 s / 15 s) |
+| 5 | `users.py`: `apply_activation` — `>=` → `>` rank comparison; same-plan re-activation no longer pollutes `previous_plans` |
+| 6 | `plans_admin.py`: `plan_edit_menu_handler` — added `None` guard before accessing `plan['title']` |
+| 7 | `keys.py`: `redeem_key` — revoked keys now return `"not_found"` instead of misleading `"used"` |
+| 8 | `keys.py`: `create_keys` — catches `BulkWriteError` specifically; success path only extends with actually-inserted keys |
+| 9 | `panel.py`: added `/cancel` command — admins can abort any multi-step flow without restarting the bot |
+| 10 | `start.py`: `FORCE_JOIN_CHANNEL` is now actually enforced with a membership check + "I Joined" re-check button |
+| 11 | `log_channel.py` (new): `LOG_CHANNEL` events now sent for `/start`, key redemptions, and broadcast completion |
+| 12 | `statistics_admin.py`: added `parse_mode=ParseMode.MARKDOWN` so `**bold**` renders correctly |
+| 13 | `content_feed.py`, `plans.py`: added `FloodWait` retry + 0.35 s inter-message delay on all media send loops |
+| 14 | `users.py`: documented that subscription expiry is not implemented (keys have expiry; users do not) |
+| 15 | `user_kb.py`: `content_nav_kb` — clamps `total_pages` to ≥ 1; prev/next share one row cleanly |
+
+## Admin Workflow
+
+- `/admin` → admin panel (use `/cancel` any time to abort a pending prompt)
+- **Welcome Settings** — set welcome photo/message
+- **Manage Plans** — edit title/description/price for each plan
+- **Manage Samples** — upload preview media per plan
+- **Upload Content** — add premium videos/photos/files
+- **Activation Keys** — generate (1/5/10/50), view unused/used, bulk-delete unused
+- **Payment Settings** — QR code, payment details text, contact-admin text
+- **Broadcast** — message all users at once
+- **Statistics** — live snapshot of users, subscribers, and keys
 
 ## Security Notes
 
-- Activation keys are generated with Python's `secrets` module
-  (cryptographically secure), never `random`.
-- Key redemption uses a single atomic `find_one_and_update` — under a
-  race between two users submitting the same key simultaneously, only
-  one can ever succeed; MongoDB guarantees this at the document level.
-- Subscription status is always read fresh from MongoDB — never cached
-  or trusted from client input.
-- `/admin` and every admin callback is gated by an `admin_only`
-  decorator checked against `ADMIN_IDS` from the environment.
-
-## Extending
-
-The plugin system means new features are just new files dropped into
-`bot/plugins/` or `bot/plugins/admin/` — Pyrogram auto-loads them at
-startup, so nothing needs to be wired up manually in `main.py`.
+- Activation keys use Python's `secrets` module (cryptographically secure).
+- Key redemption is a single atomic `find_one_and_update` — race-condition proof.
+- Subscription status is always read fresh from MongoDB — never cached.
+- `/admin` and every admin callback is gated by `@admin_only` checked against `ADMIN_IDS`.

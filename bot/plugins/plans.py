@@ -1,4 +1,7 @@
+import asyncio
+
 from pyrogram import Client, filters
+from pyrogram.errors import FloodWait
 from pyrogram.types import CallbackQuery
 
 from bot.database.users import get_user, owned_plans
@@ -7,6 +10,7 @@ from bot.database.samples import get_samples
 from bot.database.settings import get_setting
 from bot.keyboards.user_kb import plans_list_kb, plan_view_kb, get_more_kb
 from bot.strings import ENTER_KEY_PROMPT
+from bot.utils.logger import logger
 
 
 @Client.on_callback_query(filters.regex(r"^plans:list$"))
@@ -47,16 +51,28 @@ async def plan_view_handler(client: Client, cb: CallbackQuery):
         await client.send_message(cb.message.chat.id, "No samples uploaded for this plan yet.")
         return
 
+    # BUG-13 FIX: Add delay + FloodWait handling when sending sample media.
     for sample in samples:
         caption = sample.get("caption", "")
         file_type = sample["file_type"]
         file_id = sample["file_id"]
-        if file_type == "photo":
-            await client.send_photo(cb.message.chat.id, file_id, caption=caption)
-        elif file_type == "video":
-            await client.send_video(cb.message.chat.id, file_id, caption=caption)
-        else:
-            await client.send_document(cb.message.chat.id, file_id, caption=caption)
+        for attempt in range(2):
+            try:
+                if file_type == "photo":
+                    await client.send_photo(cb.message.chat.id, file_id, caption=caption)
+                elif file_type == "video":
+                    await client.send_video(cb.message.chat.id, file_id, caption=caption)
+                else:
+                    await client.send_document(cb.message.chat.id, file_id, caption=caption)
+                break
+            except FloodWait as e:
+                if attempt == 0:
+                    logger.warning("FloodWait %ds sending sample to %s", e.value, cb.message.chat.id)
+                    await asyncio.sleep(e.value + 1)
+            except Exception as e:
+                logger.error("Failed to send sample: %s", e)
+                break
+        await asyncio.sleep(0.35)
 
 
 @Client.on_callback_query(filters.regex(r"^plan:getmore:(\d+)$"))
@@ -82,4 +98,4 @@ async def activate_start_handler(client: Client, cb: CallbackQuery):
     plan_id = cb.matches[0].group(1)
     state_store.set(cb.from_user.id, "awaiting_activation_key", {"plan": plan_id})
     await cb.answer()
-    await client.send_message(cb.message.chat.id, ENTER_KEY_PROMPT)
+    await client.send_message(cb.message.chat.id, ENTER_KEY_PROMPT + "\n\nSend /cancel to abort.")

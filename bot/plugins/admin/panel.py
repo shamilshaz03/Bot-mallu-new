@@ -32,3 +32,19 @@ async def admin_close_handler(client: Client, cb: CallbackQuery):
         await cb.message.delete()
     except Exception:
         pass
+
+
+# BUG-9 FIX: /cancel command lets admins abort any multi-step flow
+# (upload content, broadcast, plan edit, etc.) without getting permanently
+# stuck in a state until the bot restarts.
+@Client.on_message(filters.command("cancel") & filters.private)
+@admin_only
+async def cancel_handler(client: Client, message: Message):
+    state = state_store.get(message.from_user.id)
+    state_store.clear(message.from_user.id)
+    if state:
+        await message.reply_text(
+            f"✅ Action cancelled (was: `{state['step']}`).\n\nUse /admin to open the panel.",
+        )
+    else:
+        await message.reply_text("Nothing to cancel. Use /admin to open the panel.")

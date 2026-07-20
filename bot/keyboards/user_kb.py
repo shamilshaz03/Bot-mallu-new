@@ -46,16 +46,24 @@ def get_more_kb(plan_id: str) -> InlineKeyboardMarkup:
 
 
 def content_nav_kb(plan_id: str, page: int, total_pages: int, category: str | None = None) -> InlineKeyboardMarkup:
-    nav_row = []
+    # BUG-15 FIX: Clamp total_pages to at least 1 here (pagination.total_pages
+    # already does this, but callers passing raw counts might not).
+    safe_total = max(total_pages, 1)
     cat = category or "-"
+
+    prev_row = []
+    next_row = []
     if page > 1:
-        nav_row.append(InlineKeyboardButton("⬅ Previous", callback_data=f"feed:page:{plan_id}:{page-1}:{cat}"))
-    if page < total_pages:
-        nav_row.append(InlineKeyboardButton("➡ Next", callback_data=f"feed:page:{plan_id}:{page+1}:{cat}"))
+        prev_row.append(InlineKeyboardButton("⬅ Previous", callback_data=f"feed:page:{plan_id}:{page-1}:{cat}"))
+    if page < safe_total:
+        next_row.append(InlineKeyboardButton("➡ Next", callback_data=f"feed:page:{plan_id}:{page+1}:{cat}"))
 
+    rows: list[list] = []
+    # Put Prev and Next on the same row when both exist; individually otherwise.
+    if prev_row or next_row:
+        rows.append(prev_row + next_row)
 
-    rows = [nav_row] if nav_row else []
-    rows.append([InlineKeyboardButton(f"Page {page}/{max(total_pages,1)}", callback_data="noop")])
+    rows.append([InlineKeyboardButton(f"Page {page}/{safe_total}", callback_data="noop")])
 
     if plan_id == "799":
         rows.append([

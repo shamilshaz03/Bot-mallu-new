@@ -7,6 +7,7 @@ from bot.utils.decorators import admin_only, state_store
 from bot.database.users import all_user_ids
 from bot.config import config
 from bot.utils.logger import logger
+from bot.utils.log_channel import send_log
 
 
 @Client.on_callback_query(filters.regex(r"^admin:broadcast$"))
@@ -16,7 +17,7 @@ async def broadcast_prompt(client: Client, cb: CallbackQuery):
     await cb.answer()
     await client.send_message(
         cb.message.chat.id,
-        "📢 Send the message or media you want to broadcast to all users now.",
+        "📢 Send the message or media you want to broadcast to all users now.\n\nSend /cancel to abort.",
     )
 
 
@@ -55,4 +56,11 @@ async def broadcast_execute(client: Client, message: Message):
         await asyncio.sleep(0.05)  # gentle rate limiting
 
     logger.info("Broadcast finished: %d sent, %d failed", sent, failed)
-    await status_msg.edit_text(f"✅ Broadcast complete.\n\nSent: {sent}\nFailed: {failed}")
+    result_text = f"✅ Broadcast complete.\n\nSent: {sent}\nFailed: {failed}"
+    await status_msg.edit_text(result_text)
+
+    # BUG-11: Log broadcast completion to the admin log channel.
+    await send_log(
+        client,
+        f"📢 Broadcast by admin `{message.from_user.id}` — sent: {sent}, failed: {failed}",
+    )

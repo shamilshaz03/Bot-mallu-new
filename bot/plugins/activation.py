@@ -8,6 +8,7 @@ from bot.database.plans import get_plan
 from bot.strings import KEY_INVALID, KEY_ALREADY_USED, KEY_ACTIVATED
 from bot.keyboards.user_kb import start_menu_kb
 from bot.utils.logger import logger
+from bot.utils.log_channel import send_log
 
 
 def _is_awaiting_key(_, __, message: Message) -> bool:
@@ -41,6 +42,12 @@ async def activation_key_handler(client: Client, message: Message):
     plan_title = plan["title"] if plan else f"₹{plan_id} Plan"
 
     logger.info("User %s activated plan %s using key %s", user_id, plan_id, redeemed["key"])
+
+    # BUG-11: Log key redemption to the admin log channel.
+    await send_log(
+        client,
+        f"🔑 Key redeemed — user `{user_id}` activated **{plan_title}** with key `{redeemed['key']}`",
+    )
 
     await message.reply_text(
         KEY_ACTIVATED.format(plan=plan_title),

@@ -29,19 +29,26 @@ async def ensure_user(user_id: int, username: str | None, first_name: str | None
 
 async def apply_activation(user_id: int, plan: str) -> None:
     """Update a user's subscription after a key is successfully redeemed.
-    Preserves previous plans (upgrade logic) and never removes access already granted.
+
+    BUG-5 FIX: Changed >= to > so that re-activating the *same* plan does
+    not push it into previous_plans (which caused the list to accumulate
+    duplicate entries). Also tightened the else-branch so a lower-ranked
+    plan only lands in previous_plans once.
     """
     user = await get_user(user_id)
     previous_plans = list(user.get("previous_plans", [])) if user else []
     current_plan = user.get("current_plan") if user else None
 
-    if current_plan and current_plan not in previous_plans:
-        previous_plans.append(current_plan)
-
-    # Only "upgrade" if the new plan ranks higher than the current one
-    if current_plan is None or config.PLAN_RANK.get(plan, 0) >= config.PLAN_RANK.get(current_plan, 0):
+    if current_plan is None or config.PLAN_RANK.get(plan, 0) > config.PLAN_RANK.get(current_plan, 0):
+        # Genuine upgrade: archive the current plan.
+        if current_plan and current_plan not in previous_plans:
+            previous_plans.append(current_plan)
         new_current = plan
+    elif plan == current_plan:
+        # Re-activating the exact same plan: just refresh activation_date.
+        new_current = current_plan
     else:
+        # Lower-ranked plan: keep current but record the new plan as owned.
         new_current = current_plan
         if plan not in previous_plans:
             previous_plans.append(plan)
