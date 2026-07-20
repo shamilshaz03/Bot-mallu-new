@@ -1,0 +1,14 @@
+# NOTE: pymongo is pinned explicitly alongside motor. Previously only motor
+# was pinned; pip's dependency resolver had to pick a pymongo version on its
+# own, which produced a resolution conflict severe enough that pip aborted
+# the ENTIRE install (including pyrogram) -- this is what caused
+# "ModuleNotFoundError: No module named 'pyrogram'" in production even
+# though pyrogram was listed below. Pinning a mutually-compatible pair of
+# motor/pymongo versions fixes this.
+pyrogram==2.0.106
+tgcrypto==1.2.5
+motor==3.6.0
+pymongo==4.9.2
+aiohttp==3.10.5
+python-dotenv==1.0.1
+uvloop==0.19.0; sys_platform != "win32"
