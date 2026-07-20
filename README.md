@@ -88,7 +88,67 @@ premium-content-bot/
    the configured `ADMIN_IDS`) to open the admin panel and start
    configuring plans, samples, content, and payment details.
 
+## Startup Audit Log (fixed issues)
+
+If you previously hit **"bot deploys, health check passes, but `/start`
+never responds"** or **`ModuleNotFoundError: No module named 'pyrogram'`**,
+those were caused by:
+
+1. **`requirements.txt` only pinned `motor`, not `pymongo`.** pip's
+   resolver had to guess a `pymongo` version, hit a conflict with
+   `motor==3.5.1`'s constraints, and aborted the *entire* install —
+   including `pyrogram` — before anything got installed. Fixed by
+   pinning a verified-compatible pair: `motor==3.6.0` + `pymongo==4.9.2`.
+2. **No MongoDB connectivity check before use.** A bad/unreachable
+   `MONGO_URI` would hang or fail deep inside index creation with no
+   clear log line. `main.py` now does an explicit `db.command("ping")`
+   with a 10s timeout and a clear error message before anything else runs.
+3. **No confirmation the bot actually connected to Telegram.** `app.start()`
+   was never wrapped in error handling, and there was no `get_me()` call to
+   prove the bot token/connection actually worked. Both are now explicit
+   and logged.
+4. **Plugin import failures could go unnoticed.** Pyrogram's built-in
+   plugin loader only warns and moves on. `main.py` now pre-imports every
+   file under `bot/plugins` itself via `bot/utils/plugin_loader.py` and
+   logs a clear success/failure line (with full traceback on failure) for
+   each one before the bot starts.
+5. **`asyncio.Event().wait()` replaced with Pyrogram's `idle()`**, which is
+   the library's documented long-running entrypoint and handles
+   SIGINT/SIGTERM (Koyeb's stop/restart signal) cleanly instead of an
+   abrupt kill.
+6. **Startup order fixed** so the health-check web server binds to `$PORT`
+   *first* and independently of Mongo/bot startup, then Mongo checks run,
+   then plugins are verified, then the bot connects — with a clear log
+   line at each stage.
+
+Expected log sequence on a healthy boot:
+
+```
+---- Environment variable check ----
+API_ID: OK (...)
+...
+Health server started (listening on port 8000).
+MongoDB connected successfully.
+Ensuring MongoDB indexes...
+Seeding default plans/settings (idempotent)...
+---- Loading plugins from 'bot/plugins' ----
+Loaded plugin: bot.plugins.start
+...
+---- Plugin loading complete: 21 succeeded, 0 failed (of 21 files) ----
+Bot connected successfully: @your_bot_username (id=123456789)
+Plugins loaded: 21/21 modules registered handlers.
+Bot is now receiving live updates from Telegram (e.g. /start will respond).
+```
+
+## Python Version
+
+This project targets **Python 3.10** (see `.python-version`, used by
+Koyeb's buildpack) and the `Dockerfile` base image is pinned to
+`python:3.10-slim` to match — keeping the buildpack and Docker deploy
+paths consistent and avoiding compiled-wheel mismatches (e.g. `tgcrypto`).
+
 ## Deploying to Koyeb
+
 
 ### Option A — Dockerfile (recommended)
 
